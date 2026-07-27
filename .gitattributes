@@ -1,0 +1,8 @@
+# Keep shell scripts LF — they run on the Linux VMs and on POSIX runners.
+*.sh    text eol=lf
+*.tf    text eol=lf
+*.bicep text eol=lf
+*.md    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+LICENSE text eol=lf

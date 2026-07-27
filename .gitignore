@@ -1,0 +1,18 @@
+# Terraform
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+crash.*.log
+
+# Local SSH / CA material the scripts consume or produce
+smallstep-ssh-ca.pub
+*.pem
+known_hosts*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
