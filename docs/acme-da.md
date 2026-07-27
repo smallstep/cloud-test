@@ -33,17 +33,26 @@ TPM / `device-attest-01` support is **built into `step-agent`** — you do not n
 `step-kms-plugin`, and raw `step ca certificate` does **not** drive the hosted
 attested flow (it errors asking for `--attestation-ca-url`).
 
-## Getting the EKpub (to register the device)
+## Getting the EK identifier (to register the device)
 
-| Cloud | EKpub source |
-| --- | --- |
-| **AWS** (NitroTPM) | control-plane: `aws ec2 get-instance-tpm-ek-pub --instance-id <id> --key-type rsa-2048 --key-format der` |
-| **GCP** (Shielded VM) | control-plane: `gcloud compute instances get-shielded-identity <name> --zone <zone>` |
-| **Azure** (Trusted Launch) | in-guest (no control-plane EKpub API): read the EK from the vTPM on the VM |
+The simplest, uniform way — works on all three clouds, no control-plane API — is to
+read it **in-guest** from the agent once installed. `enroll-acme-da.sh` prints it for
+you; to get it by hand:
 
-On AWS and GCP the control-plane EKpub equals the in-guest EK (verify by hashing
-both) — so you can register the device **before** it ever boots your workload. Azure
-has no control-plane EKpub API, so seed the identifier from the running VM.
+```bash
+sudo step-agent tpm --fingerprint      # → urn:ek:sha256:…
+```
+
+The cloud control planes also expose the EKpub (handy to register a device **before**
+it boots): AWS `aws ec2 get-instance-tpm-ek-pub --instance-id <id> --key-type rsa-2048
+--key-format der`; GCP `gcloud compute instances get-shielded-identity <name> --zone
+<zone>` (both equal the in-guest EK). Azure has **no** control-plane EKpub API — use
+the in-guest method.
+
+> **Agent version note.** `enroll-acme-da.sh` pins **`step-agent=0.67.3-1`**. Agent
+> **0.68.0** has a TPM AK-attestation regression that returns `404` on GCP and Azure
+> `device-attest-01` (AWS NitroTPM is unaffected). Override with `STEP_AGENT_VERSION=`
+> (empty for latest) once it's fixed upstream.
 
 ## What you get
 
@@ -52,8 +61,8 @@ Each issued device certificate:
 - **Issuer:** the Smallstep **Devices** intermediate CA · **Provisioner:** `acme-da`
 - **Subject SANs:** a host id (`urn:smallstep:host:id:…`) and the EK identifier
   (`urn:ek:sha256:…`) that matched the registered inventory device
-- **Key:** ECDSA P-256, **TPM-resident** — `service.key` is 0 bytes on disk because
-  the private key lives in the vTPM and the attestation proved possession
+- **Key:** ECDSA P-256, **TPM-resident** — there is no usable `service.key` on disk
+  (absent / 0 bytes); the private key lives in the vTPM and the attestation proved possession
 - **Assurance:** `highAssurance: true`, from the TPM `device-attest-01` attestation
   itself (not from any confidential-compute feature)
 

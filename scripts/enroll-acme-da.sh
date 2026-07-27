@@ -10,9 +10,14 @@
 # Prereqs:
 #   export STEP_TEAM=<your-team-slug>
 #   export STEP_CA_FINGERPRINT=<your-Agents-CA-fingerprint>
-#   The device's EK must be an approved identity in your Smallstep inventory. The
-#   agent presents the EK on first contact; approve the device (dashboard/API), or
-#   pre-register it as urn:ek:sha256:base64(sha256(DER EKpub)). See docs/acme-da.md.
+#   The device's EK must be a registered/approved identity in your Smallstep
+#   inventory (acme-da only issues to a registered EK). This script reads + prints
+#   the EK identifier in-guest (`step-agent tpm --fingerprint`) so you know exactly
+#   what to register. See docs/acme-da.md.
+#
+#   STEP_AGENT_VERSION (optional): apt version suffix for step-agent. Defaults to
+#   "=0.67.3-1" — 0.68.0 has a TPM AK-attestation regression that 404s on GCP/Azure
+#   device-attest-01. Set STEP_AGENT_VERSION= (empty) for latest once it's fixed.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$HERE/lib.sh"
@@ -26,27 +31,11 @@ USER="$(cloud_output "$CLOUD" ssh_user)"
 VM="$USER@$IP"
 wait_for_ssh "$VM"
 
-# Print the device's EK identifier so you can register/approve it in the Smallstep
-# inventory — the acme-da flow only issues to a registered EK. The identifier is
-# urn:ek:sha256:base64(sha256(DER EKpub)).
-print_ek_hint() {
-  case "$1" in
-    aws)
-      local iid ek; iid="$(cloud_output aws instance_id 2>/dev/null)"
-      ek="$(aws ec2 get-instance-tpm-ek-pub --instance-id "$iid" --key-type rsa-2048 \
-              --key-format der --query KeyValue --output text 2>/dev/null \
-            | base64 -d 2>/dev/null | openssl dgst -sha256 -binary | openssl base64)"
-      [[ -n "$ek" ]] && log "device EK identifier: urn:ek:sha256:$ek" ;;
-    gcp)
-      log "GCP EK: gcloud compute instances get-shielded-identity <name> --zone <zone> --format json → hash the EKpub DER" ;;
-    azure)
-      log "Azure EK: no control-plane API — read the EK in-guest from the vTPM" ;;
-  esac
-  log "If this device is not yet approved in your Smallstep inventory, register that identifier first (see docs/acme-da.md)."
-}
-print_ek_hint "$CLOUD"
+# Pinned step-agent apt version (see header). Default "=0.67.3-1"; STEP_AGENT_VERSION=
+# (empty) installs latest.
+STEP_AGENT_PIN="${STEP_AGENT_VERSION-=0.67.3-1}"
 
-log "installing official step-cli + step-agent on $VM and enrolling (device-attest-01)"
+log "installing official step-cli + step-agent${STEP_AGENT_PIN} on $VM and enrolling (device-attest-01)"
 ssh_admin "$VM" "sudo bash -s" <<REMOTE
 set -euo pipefail
 # Official Smallstep apt repo — no custom client code.
@@ -56,7 +45,7 @@ if ! command -v step-agent >/dev/null 2>&1; then
   echo 'deb https://packages.smallstep.com/stable/debian debs main' \
     | sudo tee /etc/apt/sources.list.d/smallstep.list >/dev/null
   sudo apt-get update -qq
-  sudo apt-get install -y -qq step-cli step-agent
+  sudo apt-get install -y -qq --allow-downgrades step-cli "step-agent${STEP_AGENT_PIN}"
 fi
 
 # The agent config is just the team + the Agents-CA fingerprint. TPM /
@@ -70,7 +59,13 @@ YAML
 sudo systemctl enable --now step-agent
 REMOTE
 
-log "waiting for the device certificate to be issued (approve the device in inventory if it is pending)…"
+# Read the device's EK identifier in-guest from the vTPM — uniform across clouds,
+# no control-plane API needed. Register/approve this in your Smallstep inventory if
+# it isn't already; acme-da only issues to a registered EK. See docs/acme-da.md.
+EK_ID="$(ssh_admin "$VM" "sudo step-agent tpm --fingerprint 2>/dev/null" | tr -d '\r' | grep -m1 '^urn:ek:' || true)"
+[[ -n "$EK_ID" ]] && log "device EK identifier: $EK_ID"
+
+log "waiting for the device certificate to be issued (register/approve the device if pending)…"
 cert=/var/lib/step-agent/certificates/device/service.crt
 for i in $(seq 1 30); do
   if ssh_admin "$VM" "sudo test -s $cert"; then
