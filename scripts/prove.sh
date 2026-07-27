@@ -24,12 +24,26 @@ OP="operator@$IP"
 
 fail=0
 
+# The positive test relies on the Smallstep SSH agent. On Windows that agent is a
+# named pipe (\\.\pipe\step-agent-ssh) that Git Bash's ssh CANNOT consume, but the
+# native Windows OpenSSH can — so on MSYS we drive the positive test through
+# ssh.exe. Everywhere else the agent socket works with the normal ssh.
+IS_WIN=0; case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) IS_WIN=1;; esac
+op_ssh() {
+  if [[ "$IS_WIN" == 1 && -x /c/Windows/System32/OpenSSH/ssh.exe ]]; then
+    /c/Windows/System32/OpenSSH/ssh.exe -o StrictHostKeyChecking=accept-new \
+      -o BatchMode=yes -o ConnectTimeout=15 "$@"
+  else
+    ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=15 "$@"
+  fi
+}
+
 echo "── PASS 1 (positive): SSH in as operator using the hardware SSH cert ──" >&2
-if who="$(ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=15 "$OP" whoami 2>/dev/null)" \
-     && [[ "$who" == "operator" ]]; then
+if who="$(op_ssh "$OP" whoami 2>/dev/null)" && [[ "$who" == "operator" ]]; then
   echo "  ✅ logged in as '$who' with no key/password (cert presented by the agent)" >&2
 else
-  echo "  ❌ could not log in with the cert — is SSH_AUTH_SOCK pointed at the Smallstep agent? (ssh-add -L)" >&2
+  echo "  ❌ could not log in with the cert — check the Smallstep agent (ssh-add -L shows your cert)." >&2
+  [[ "$IS_WIN" == 1 ]] && echo "     Windows: ensure SSH_AUTH_SOCK=\\\\.\\pipe\\step-agent-ssh, or run the positive test from PowerShell: ssh $OP whoami" >&2
   fail=1
 fi
 

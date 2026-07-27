@@ -84,6 +84,13 @@ lockout.
 
    Verify: `ssh-add -L` shows a cert whose principal equals your Smallstep identity.
 
+   > **Windows:** the agent is a named pipe that **Git Bash's ssh cannot consume** —
+   > use the **native Windows OpenSSH** (`C:\Windows\System32\OpenSSH\ssh.exe`, i.e.
+   > `ssh` from PowerShell). `prove.sh` handles this automatically (it shells out to
+   > the native `ssh.exe` for the positive test); if you drive SSH yourself on
+   > Windows, run it from PowerShell, not Git Bash. Admin/provisioning connections
+   > use your key (not the agent), so those work from either shell.
+
 ## Part C — prove it
 
 ```bash

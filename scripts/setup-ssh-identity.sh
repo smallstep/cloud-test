@@ -31,7 +31,7 @@ VM="$USER@$IP"
 wait_for_ssh "$VM"
 
 log "uploading the SSH user CA key(s) → $VM"
-scp "${SSH_OPTS[@]}" "$SSH_USER_CA_FILE" "$VM:/tmp/smallstep_ca.pub"
+scp_admin "$SSH_USER_CA_FILE" "$VM:/tmp/smallstep_ca.pub"
 
 log "configuring sshd (cert trust) + cert-only operator user"
 ssh_admin "$VM" "sudo OPERATOR_PRINCIPAL='$OPERATOR_PRINCIPAL' bash -s" <<'REMOTE'

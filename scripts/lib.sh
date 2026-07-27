@@ -44,10 +44,27 @@ else
   SSH_OPTS=( -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$SSH_KNOWN_HOSTS" )
 fi
 
-# Run a command on the VM as the admin (provisioning) user, applying host-key policy.
+# Run a command on the VM as the admin (provisioning) user, applying host-key
+# policy. Admin auth uses the provisioning KEY, not an SSH agent — set
+# ADMIN_SSH_KEY to point at it (default ~/.ssh/id_ed25519, else ~/.ssh/id_rsa).
+# IdentityAgent=none is deliberate: on Windows the Smallstep agent is a named pipe
+# that Git Bash's ssh can't consume, and admin access shouldn't depend on it anyway.
+ADMIN_SSH_KEY="${ADMIN_SSH_KEY:-}"
+if [[ -z "$ADMIN_SSH_KEY" ]]; then
+  for k in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa"; do
+    [[ -f "$k" ]] && { ADMIN_SSH_KEY="$k"; break; }
+  done
+fi
 ssh_admin() {
   local user_host="$1"; shift
-  ssh "${SSH_OPTS[@]}" -o ConnectTimeout=15 "$user_host" "$@"
+  ssh "${SSH_OPTS[@]}" -o ConnectTimeout=15 -o IdentityAgent=none -o IdentitiesOnly=yes \
+      ${ADMIN_SSH_KEY:+-i "$ADMIN_SSH_KEY"} "$user_host" "$@"
+}
+
+# scp using the same admin-key policy.
+scp_admin() {
+  scp "${SSH_OPTS[@]}" -o IdentityAgent=none -o IdentitiesOnly=yes \
+      ${ADMIN_SSH_KEY:+-i "$ADMIN_SSH_KEY"} "$@"
 }
 
 # Wait until SSH answers (post boot).
