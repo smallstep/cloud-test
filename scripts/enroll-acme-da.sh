@@ -26,6 +26,26 @@ USER="$(cloud_output "$CLOUD" ssh_user)"
 VM="$USER@$IP"
 wait_for_ssh "$VM"
 
+# Print the device's EK identifier so you can register/approve it in the Smallstep
+# inventory — the acme-da flow only issues to a registered EK. The identifier is
+# urn:ek:sha256:base64(sha256(DER EKpub)).
+print_ek_hint() {
+  case "$1" in
+    aws)
+      local iid ek; iid="$(cloud_output aws instance_id 2>/dev/null)"
+      ek="$(aws ec2 get-instance-tpm-ek-pub --instance-id "$iid" --key-type rsa-2048 \
+              --key-format der --query KeyValue --output text 2>/dev/null \
+            | base64 -d 2>/dev/null | openssl dgst -sha256 -binary | openssl base64)"
+      [[ -n "$ek" ]] && log "device EK identifier: urn:ek:sha256:$ek" ;;
+    gcp)
+      log "GCP EK: gcloud compute instances get-shielded-identity <name> --zone <zone> --format json → hash the EKpub DER" ;;
+    azure)
+      log "Azure EK: no control-plane API — read the EK in-guest from the vTPM" ;;
+  esac
+  log "If this device is not yet approved in your Smallstep inventory, register that identifier first (see docs/acme-da.md)."
+}
+print_ek_hint "$CLOUD"
+
 log "installing official step-cli + step-agent on $VM and enrolling (device-attest-01)"
 ssh_admin "$VM" "sudo bash -s" <<REMOTE
 set -euo pipefail
@@ -57,8 +77,8 @@ for i in $(seq 1 30); do
     log "device certificate issued — inspecting:"
     ssh_admin "$VM" "sudo step certificate inspect $cert --short 2>/dev/null || sudo step certificate inspect $cert" \
       | sed 's/^/    /' >&2
-    log "the private key is TPM-resident (service.key is 0 bytes on disk):"
-    ssh_admin "$VM" "sudo ls -l /var/lib/step-agent/certificates/device/service.key" | sed 's/^/    /' >&2
+    log "the private key is TPM-resident (no usable key material on disk):"
+    ssh_admin "$VM" "sudo ls -l /var/lib/step-agent/certificates/device/service.key 2>/dev/null || echo 'service.key: absent — the private key lives in the vTPM'" | sed 's/^/    /' >&2
     exit 0
   fi
   sleep 10
