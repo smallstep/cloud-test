@@ -85,7 +85,7 @@ resource "aws_security_group" "vm" {
   # from anywhere — narrow ssh_ingress_cidr to your /32 for network-layer scoping
   # on top of the cert gate.
   ingress {
-    description = "SSH — the hardware SSH cert is the gate"
+    description = "SSH - the hardware SSH cert is the gate"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
