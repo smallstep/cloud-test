@@ -12,6 +12,15 @@ destroy_one() {
   local cloud="$1"
   case "$cloud" in
     aws|gcp)
+      # destroy operates from state, and ssh_public_key is only a resource input,
+      # so a placeholder satisfies terraform's "variable not set" check — you don't
+      # need to re-export the original key just to tear down.
+      export TF_VAR_ssh_public_key="${TF_VAR_ssh_public_key:-ssh-ed25519 AAAAB3NzaC1teardown-placeholder}"
+      if [[ "$cloud" == gcp ]]; then
+        # project_id is provider config (not just a resource input), so it must be real.
+        export TF_VAR_project_id="${TF_VAR_project_id:-$(gcloud config get-value project 2>/dev/null)}"
+        [[ -n "${TF_VAR_project_id:-}" ]] || die "GCP teardown needs TF_VAR_project_id (or a gcloud default project)"
+      fi
       log "terraform destroy → $cloud"
       terraform -chdir="$(iac_dir "$cloud")" destroy -auto-approve
       ;;
