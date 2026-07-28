@@ -16,3 +16,7 @@ known_hosts*
 .DS_Store
 Thumbs.db
 *.swp
+
+# Local demo kit (contains live IPs / device IDs — not for the public repo)
+cloud-test.html
+sshvm-handler*.reg
