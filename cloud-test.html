@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<!--
+  cloud-test demo page — a point-in-time snapshot of three live, cert-gated VMs.
+  Reuse it for your own demo: per card, swap the IP (addr), VM id, device-cert
+  serial, and the Device link — replace the `smallsteppers` team slug and the
+  device UUID with your tenant's. The `sshvm://` buttons need sshvm-handler.reg
+  imported once (see the note near the bottom). These VMs are ephemeral; the
+  IPs/links are examples, not permanently live.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cloud-test · hardware-bound device identity demo</title>
+<style>
+  :root {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --surface-2: #f6f8fa;
+    --ink: #16202b;
+    --muted: #5a6774;
+    --faint: #8593a0;
+    --line: #d7dee6;
+    --line-strong: #c3ccd6;
+    --accent: #0e8fa6;
+    --accent-soft: #0e8fa61a;
+    --pass: #1f8f57;
+    --pass-soft: #1f8f571a;
+    --aws: #ff9900;
+    --gcp: #4285f4;
+    --azure: #0a84ff;
+    --shadow: 0 1px 2px rgba(20,30,42,.04), 0 8px 24px rgba(20,30,42,.06);
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f141a;
+      --surface: #171d25;
+      --surface-2: #1c232c;
+      --ink: #e7edf3;
+      --muted: #97a4b1;
+      --faint: #6c7987;
+      --line: #29323d;
+      --line-strong: #37424f;
+      --accent: #45c9df;
+      --accent-soft: #45c9df1f;
+      --pass: #40cf85;
+      --pass-soft: #40cf8518;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: clamp(24px, 5vw, 56px) clamp(18px, 4vw, 40px) 72px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 14px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before { content: ""; width: 26px; height: 1px; background: var(--accent); opacity: .7; }
+  h1 {
+    font-family: var(--mono); font-weight: 600;
+    font-size: clamp(28px, 4.4vw, 42px); line-height: 1.08; letter-spacing: -.01em;
+    margin: 0 0 18px; text-wrap: balance;
+  }
+  h1 .lo { color: var(--accent); }
+  .lede {
+    font-size: clamp(16px, 1.9vw, 19px); color: var(--muted);
+    max-width: 62ch; margin: 0 0 26px; text-wrap: pretty;
+  }
+  .lede b { color: var(--ink); font-weight: 600; }
+  .status {
+    display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 13px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 999px; padding: 7px 15px; box-shadow: var(--shadow);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--pass); box-shadow: 0 0 0 4px var(--pass-soft); flex: none; }
+  .status .sep { color: var(--line-strong); }
+  .status b { color: var(--ink); font-weight: 600; }
+  .rule { height: 1px; background: var(--line); border: 0; margin: 40px 0; }
+  .sect-label {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--faint); margin: 0 0 16px;
+  }
+  .clouds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 720px) { .clouds { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 20px 20px 18px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .card-top { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+  .brand { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .card h3 { font-family: var(--mono); font-size: 17px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
+  .assur {
+    margin-left: auto; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--pass); background: var(--pass-soft);
+    padding: 3px 8px; border-radius: 5px; white-space: nowrap;
+  }
+  .meta { font-family: var(--mono); font-size: 12.5px; color: var(--muted); display: grid; gap: 3px; margin: 8px 0 6px; }
+  .meta .k { color: var(--faint); }
+  .meta .v { color: var(--ink); }
+  .fingerprint {
+    font-family: var(--mono); font-size: 11px; color: var(--faint);
+    border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 10px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .fingerprint b { color: var(--accent); font-weight: 500; }
+  .links { display: flex; gap: 8px; margin-top: 14px; }
+  .btn {
+    flex: 1; text-align: center; font-family: var(--mono); font-size: 12px;
+    padding: 9px 8px; border-radius: 8px; border: 1px solid var(--line-strong);
+    color: var(--ink); background: var(--surface-2); transition: border-color .15s, background .15s, transform .05s;
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { border-color: var(--accent); color: var(--accent); }
+  .note { font-size: 13.5px; color: var(--muted); }
+  .note b { color: var(--ink); font-weight: 600; }
+  .note code { font-family: var(--mono); font-size: 12.5px; color: var(--ink); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  footer {
+    margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12.5px; color: var(--faint);
+    display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: space-between;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .card, .status { animation: rise .5s cubic-bezier(.2,.7,.2,1) both; }
+    .clouds .card:nth-child(2) { animation-delay: .06s; }
+    .clouds .card:nth-child(3) { animation-delay: .12s; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">cloud-test · live demo</p>
+    <h1>One device cert, issued to <span class="lo">hardware</span>.<br>With it you're in. Without it, refused at the handshake.</h1>
+    <p class="lede">
+      Three real VMs — one each on <b>AWS</b>, <b>GCP</b>, and <b>Azure</b> — each gate
+      <b>SSH</b> on a hardware-attested device identity whose private key lives in the
+      machine's <b>vTPM</b> and never leaves it. Present a current cert and you're admitted;
+      present none and the SSH layer turns you away.
+    </p>
+    <div class="status">
+      <span class="dot"></span>
+      <b>3 / 3 VMs live</b><span class="sep">·</span> high-assurance <span class="sep">·</span>
+      6 / 6 SSH checks green <span class="sep">·</span> verified live · Jul 28, 2026
+    </div>
+  </header>
+  <hr class="rule">
+  <p class="sect-label">The VMs — open an SSH session or the device page</p>
+  <div class="clouds">
+    <div class="card">
+      <div class="card-top">
+        <span class="brand" style="background:var(--aws)"></span>
+        <h3>AWS</h3>
+        <span class="assur">high-assurance</span>
+      </div>
+      <div class="meta">
+        <div><span class="k">surface&nbsp;</span><span class="v">NitroTPM · m7i.large</span></div>
+        <div><span class="k">addr&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">100.59.9.34</span></div>
+        <div><span class="k">vm&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">i-09ca469d902cb64a3</span></div>
+      </div>
+      <div class="fingerprint">device cert <b>1760…8422</b> · key in vTPM</div>
+      <div class="links">
+        <a class="btn primary" href="sshvm://operator@100.59.9.34">SSH</a>
+        <a class="btn" href="https://smallstep.com/app/smallsteppers/devices/detail/067aa146-6b77-464a-b452-326b179fcf44" target="_blank" rel="noopener">Device</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-top">
+        <span class="brand" style="background:var(--gcp)"></span>
+        <h3>GCP</h3>
+        <span class="assur">high-assurance</span>
+      </div>
+      <div class="meta">
+        <div><span class="k">surface&nbsp;</span><span class="v">Shielded VM · e2-standard-2</span></div>
+        <div><span class="k">addr&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">136.119.147.224</span></div>
+        <div><span class="k">vm&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">vtpm-ssh</span></div>
+      </div>
+      <div class="fingerprint">device cert <b>5558…6568</b> · key in vTPM</div>
+      <div class="links">
+        <a class="btn primary" href="sshvm://operator@136.119.147.224">SSH</a>
+        <a class="btn" href="https://smallstep.com/app/smallsteppers/devices/detail/8b181692-0f10-425d-b787-7c3a9dcc66fc" target="_blank" rel="noopener">Device</a>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-top">
+        <span class="brand" style="background:var(--azure)"></span>
+        <h3>Azure</h3>
+        <span class="assur">high-assurance</span>
+      </div>
+      <div class="meta">
+        <div><span class="k">surface&nbsp;</span><span class="v">Trusted Launch · Standard_D2s_v5</span></div>
+        <div><span class="k">addr&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">20.186.25.122</span></div>
+        <div><span class="k">vm&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span><span class="v">vtpm-ssh</span></div>
+      </div>
+      <div class="fingerprint">device cert <b>1729…8703</b> · key in vTPM</div>
+      <div class="links">
+        <a class="btn primary" href="sshvm://operator@20.186.25.122">SSH</a>
+        <a class="btn" href="https://smallstep.com/app/smallsteppers/devices/detail/3bae0a1c-5e57-4a81-b7e8-eed37500a109" target="_blank" rel="noopener">Device</a>
+      </div>
+    </div>
+  </div>
+  <p class="note" style="margin-top:14px;"><b>SSH</b> opens a PowerShell window and runs
+    <code>ssh operator@&lt;vm&gt;</code> — your Smallstep agent presents the hardware SSH cert and
+    you land in a shell. This needs a one-time setup on the demo machine: import
+    <code>sshvm-handler.reg</code> (registers the <code>sshvm://</code> link to launch pwsh + ssh),
+    then approve the browser's "open PowerShell?" prompt the first time you click. No cert →
+    <code>Permission denied (publickey)</code>.</p>
+  <footer>
+    <span>smallstep/cloud-test · demo kit</span>
+    <span>SSH · hardware-bound on AWS · GCP · Azure</span>
+  </footer>
+</div>
+</body>
+</html>

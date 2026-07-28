@@ -1,0 +1,21 @@
+Windows Registry Editor Version 5.00
+
+; Registers the sshvm:// URL scheme so the cloud-test demo page's "SSH" buttons
+; open a PowerShell window and run `ssh operator@<vm>`, presenting your hardware
+; SSH cert via the Smallstep agent named pipe. Import once (double-click, accept
+; the UAC/confirm prompt), then approve the browser's "open PowerShell?" prompt
+; the first time. Remove with sshvm-handler-remove.reg / reg delete HKCR\sshvm.
+
+[HKEY_CLASSES_ROOT\sshvm]
+@="URL:sshvm Protocol"
+"URL Protocol"=""
+
+[HKEY_CLASSES_ROOT\sshvm\DefaultIcon]
+@="powershell.exe,0"
+
+[HKEY_CLASSES_ROOT\sshvm\shell]
+
+[HKEY_CLASSES_ROOT\sshvm\shell\open]
+
+[HKEY_CLASSES_ROOT\sshvm\shell\open\command]
+@="powershell.exe -NoExit -Command \"$env:SSH_AUTH_SOCK='\\\\.\\pipe\\step-agent-ssh'; $u=('%1' -replace '^sshvm://','' -replace '/$',''); ssh -o StrictHostKeyChecking=accept-new $u\""
