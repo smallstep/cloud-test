@@ -1,10 +1,11 @@
-# ACME Device Attestation — enrolling the VM's vTPM
+# ACME Device Attestation — enroll the vTPM of the VM
 
-Each VM proves it is a genuine, attested device by its cloud **vTPM**, and gets a
-Smallstep certificate whose private key is **generated in and never leaves the
-vTPM**. This is the "secure" in "3 secure VMs." Automated by
-[`scripts/enroll-acme-da.sh`](../scripts/enroll-acme-da.sh) — **official artifacts
-only, no custom client code.**
+Each VM shows that it is an approved device with its cloud **vTPM**. The VM
+gets a Smallstep certificate. The vTPM **makes the private key** of this
+certificate. The private key **does not go out of the vTPM**. The script
+[`scripts/enroll-acme-da.sh`](../scripts/enroll-acme-da.sh) does this procedure
+automatically. The procedure uses **official software only, with no custom
+client code**.
 
 ## The flow
 
@@ -17,56 +18,71 @@ Terraform/Bicep VM  ──►  EKpub  ──►  Smallstep inventory (device reg
                                                 + the AK lives in the same TPM   TPM-resident key
 ```
 
-1. **Register the device's EK** in your Smallstep inventory as an approved identity.
-   The inventory identifier is `urn:ek:sha256:` + base64 of the SHA-256 over the EK
-   public key's DER `SubjectPublicKeyInfo`. Either pre-register that value, or let
-   the agent present the EK on first contact and approve the pending device.
-2. **Install `step-agent`** and drop in `/etc/step-agent/agent.yaml`:
+1. **Register the EK of the device** in your Smallstep inventory as an approved
+   identity. The inventory identifier is `urn:ek:sha256:` + the base64 value of
+   the SHA-256 hash of the DER `SubjectPublicKeyInfo` of the EK public key. You
+   can register this value before the first contact. As an alternative, let the
+   agent send the EK on the first contact. Then approve the device in the
+   inventory.
+2. **Install `step-agent`.** Write this configuration to
+   `/etc/step-agent/agent.yaml`:
    ```yaml
    team: <your-team-slug>
    fingerprint: <your-Agents-CA-fingerprint>
    ```
-3. The agent runs **ACME `device-attest-01`** (TPM), proving control of the EK, and
-   receives a leaf from the **Devices CA** with a TPM-resident private key.
+3. The agent does the **ACME `device-attest-01`** (TPM) procedure. The
+   procedure shows that the agent controls the EK. The **Devices CA** then
+   issues a leaf certificate. The private key of this certificate stays in the
+   TPM.
 
-TPM / `device-attest-01` support is **built into `step-agent`** — you do not need
-`step-kms-plugin`, and raw `step ca certificate` does **not** drive the hosted
-attested flow (it errors asking for `--attestation-ca-url`).
+`step-agent` **contains the TPM / `device-attest-01` function**. You do not
+need `step-kms-plugin`. The command `step ca certificate` cannot do the hosted
+attested flow. It stops with an error message about `--attestation-ca-url`.
 
-## Getting the EK identifier (to register the device)
+## Get the EK identifier (to register the device)
 
-The simplest, uniform way — works on all three clouds, no control-plane API — is to
-read it **in-guest** from the agent once installed. `enroll-acme-da.sh` prints it for
-you; to get it by hand:
+The most simple method operates on all three clouds and does not use a
+control-plane API: read the identifier **in the guest** after you install the
+agent. The script `enroll-acme-da.sh` shows the identifier. To get the
+identifier manually:
 
 ```bash
 sudo step-agent tpm --fingerprint      # → urn:ek:sha256:…
 ```
 
-The cloud control planes also expose the EKpub (handy to register a device **before**
-it boots): AWS `aws ec2 get-instance-tpm-ek-pub --instance-id <id> --key-type rsa-2048
---key-format der`; GCP `gcloud compute instances get-shielded-identity <name> --zone
-<zone>` (both equal the in-guest EK). Azure has **no** control-plane EKpub API — use
-the in-guest method.
+The cloud control planes also give the EK public key. This is useful when you
+register a device **before** its first boot:
 
-> **Agent version note.** `enroll-acme-da.sh` pins **`step-agent=0.67.3-1`**. Agent
-> **0.68.0** has a TPM AK-attestation regression that returns `404` on GCP and Azure
-> `device-attest-01` (AWS NitroTPM is unaffected). Override with `STEP_AGENT_VERSION=`
-> (empty for latest) once it's fixed upstream.
+- AWS: `aws ec2 get-instance-tpm-ek-pub --instance-id <id> --key-type rsa-2048
+  --key-format der`
+- GCP: `gcloud compute instances get-shielded-identity <name> --zone <zone>`
 
-## What you get
+These values are the same as the in-guest EK. Azure has **no** control-plane
+EK API. Use the in-guest method on Azure.
 
-Each issued device certificate:
+> **Agent version note.** The script `enroll-acme-da.sh` sets the version
+> **`step-agent=0.67.3-1`**. Version **0.68.0** has a TPM AK-attestation
+> malfunction. This malfunction causes a `404` error on GCP and Azure
+> `device-attest-01`. AWS NitroTPM is not affected. After the upstream repair,
+> set `STEP_AGENT_VERSION=` (empty, for the latest version).
 
-- **Issuer:** the Smallstep **Devices** intermediate CA · **Provisioner:** `acme-da`
-- **Subject SANs:** a host id (`urn:smallstep:host:id:…`) and the EK identifier
-  (`urn:ek:sha256:…`) that matched the registered inventory device
-- **Key:** ECDSA P-256, **TPM-resident** — there is no usable `service.key` on disk
-  (absent / 0 bytes); the private key lives in the vTPM and the attestation proved possession
-- **Assurance:** `highAssurance: true`, from the TPM `device-attest-01` attestation
-  itself (not from any confidential-compute feature)
+## The certificate contents
 
-Inspect it on the VM:
+Each device certificate has these properties:
+
+- **Issuer:** the Smallstep **Devices** intermediate CA. **Provisioner:**
+  `acme-da`.
+- **Subject SANs:** a host ID (`urn:smallstep:host:id:…`) and the EK identifier
+  (`urn:ek:sha256:…`). The EK identifier is the same as the registered
+  inventory device.
+- **Key:** ECDSA P-256. The private key **stays in the TPM**. The file
+  `service.key` on the disk is absent or empty. The attestation showed that the
+  device controls the key.
+- **Assurance:** `highAssurance: true`. This value comes from the TPM
+  `device-attest-01` attestation. It does not come from a confidential-compute
+  function.
+
+Examine the certificate on the VM:
 
 ```bash
 sudo step certificate inspect /var/lib/step-agent/certificates/device/service.crt
@@ -74,11 +90,12 @@ sudo step certificate inspect /var/lib/step-agent/certificates/device/service.cr
 
 ## Portability note
 
-The portable trust anchor across all three clouds is the **EK public key in
-inventory + a credential-activation possession proof**, identified by the EKpub
-hash (`urn:ek:sha256:…`). Some surfaces additionally offer an EK **certificate**
-chain (e.g. GCP Confidential VMs get a Google-rooted EK cert); where present that is
-an upgrade, but the bare-EKpub allowlist is the baseline that works everywhere.
+The trust anchor that operates on all three clouds is the **EK public key in
+the inventory** plus a **credential-activation possession proof**. The hash of
+the EK public key (`urn:ek:sha256:…`) identifies the device. Some surfaces
+also give an EK **certificate** chain. For example, GCP Confidential VMs get an
+EK certificate with a Google root. This chain is better where it is available.
+The EK public-key list is the base method that operates on all clouds.
 
-> Cloud SKUs and platform features move fast — re-verify the per-cloud commands
-> before relying on them.
+> Cloud products and platform functions change frequently. Do the per-cloud
+> commands again in a test before you use them.

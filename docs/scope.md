@@ -1,14 +1,15 @@
 # Scope
 
-## In scope — two features, three clouds
+## In scope: two functions, three clouds
 
-1. **ACME Device Attestation (`device-attest-01`)** — enroll each VM's cloud vTPM
-   into Smallstep so the VM holds a hardware-attested device identity with a
-   TPM-resident key.
-2. **SSH device identity** — gate `operator` login on a hardware-attested Smallstep
-   SSH certificate, and prove access is refused without it.
+1. **ACME Device Attestation (`device-attest-01`)** — Enroll the cloud vTPM of
+   each VM into Smallstep. Then the VM holds a hardware-attested device
+   identity. The private key of this identity stays in the TPM.
+2. **SSH device identity** — Permit `operator` login only with a
+   hardware-attested Smallstep SSH certificate. Show that the server refuses
+   access without this certificate.
 
-On three vTPM surfaces, one VM each:
+The project uses three vTPM surfaces, with one VM for each surface:
 
 - **AWS** NitroTPM
 - **GCP** Shielded VM
@@ -16,29 +17,34 @@ On three vTPM surfaces, one VM each:
 
 ## Success criteria
 
-- **3 running VMs**, one per cloud, each with an attested vTPM device identity.
-- **Access only via SSH device identity:** `operator@<vm>` logs in with a hardware
-  SSH cert and **cannot** be reached without one — demonstrated by
-  [`scripts/prove.sh`](../scripts/prove.sh) (positive + negative test) on all three.
+- **Three VMs operate**, one for each cloud. Each VM has an attested vTPM
+  device identity.
+- **SSH device identity is the only access path.** You can log in to
+  `operator@<vm>` with a hardware SSH certificate. You cannot log in without
+  one. The script [`scripts/prove.sh`](../scripts/prove.sh) shows this on all
+  three VMs. The script does a positive test and a negative test.
 
-## Explicitly out of scope
+## Out of scope
 
-Kept out on purpose to keep this a single, clean story:
+We keep these items out. Thus the repository shows one clear story:
 
 - **mTLS / HTTPS / REST** access (client-certificate gateways).
-- **MCP** or any application-layer bridge.
+- **MCP** or other application-layer bridges.
 - **Workload identity** (SPIFFE / OIDC).
-- **Confidential computing** (SEV-SNP / TDX) as an identity root, and the
-  EK-reliability lifecycle harness (reboot/stop-start/redeploy survival testing).
-- **Post-quantum** anything.
+- **Confidential computing** (SEV-SNP / TDX) as an identity root, and the EK
+  lifecycle tests (reboot, stop-start, and redeploy).
+- **Post-quantum** cryptography.
 
-Those are separate stories for separate write-ups.
+These items are for different documents.
 
 ## Notes
 
-- The **hardware SSH cert is the access control**; port 22 is intentionally
-  reachable so "refused without the cert" is demonstrable from anywhere. Network
-  scoping (`/32`, bastion) is an optional layer on top, not the gate.
-- The admin/provisioning user (`ubuntu` / `azureuser`) stays key-based and is not
-  cert-accessible — it exists only to bring the box up and configure `sshd`.
-- This is a **reference / demo**, not production IaC. See the README security notes.
+- **The hardware SSH certificate is the access control.** Port 22 is open by
+  design. Thus you can show the refused login from each location. Network
+  limits (a `/32` rule, a bastion) are an optional layer. They are not the
+  gate.
+- The admin user (`ubuntu` / `azureuser`) uses a key. This user cannot use a
+  certificate. This user exists only for the initial configuration of the VM
+  and `sshd`.
+- This repository is a **reference demonstration**, not production IaC. Refer
+  to the security notes in the README.

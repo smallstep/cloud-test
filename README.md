@@ -1,21 +1,25 @@
 # Hardware-Attested SSH Across Three Clouds
 
-Three cloud VMs — one on **AWS**, one on **GCP**, one on **Azure** — where the
-**only** way in is a **hardware-attested SSH certificate**. No static keys, no
-passwords. Take the certificate away and you cannot log in, even though the port
-is wide open.
+This repository makes three cloud VMs: one on **AWS**, one on **GCP**, and one
+on **Azure**. A **hardware-attested SSH certificate** is the only key that opens
+a session on each VM. The VMs do not use static keys or passwords. Port 22 is
+open, but you cannot log in without the certificate.
 
-Every identity here is rooted in a real **TPM 2.0**:
+Each identity has its root in **TPM 2.0** hardware:
 
-- **The VM** proves it is a genuine, attested device by its cloud **vTPM**, enrolled
-  into [Smallstep](https://smallstep.com) via **ACME [`device-attest-01`](https://smallstep.com/docs/step-ca/provisioners/#acme)**.
-  Its issued certificate's private key is generated in, and never leaves, the vTPM.
-- **The operator** (you) logs in with an **SSH certificate whose private key lives
-  in your laptop's TPM/Secure Enclave**. `sshd` trusts the *issuing CA*, not a
-  pinned key — so any enrolled, high-assurance device is admitted and anything else
-  is refused.
+- **The VM** shows that it is an approved device with its cloud **vTPM**. The VM
+  enrolls into [Smallstep](https://smallstep.com) through **ACME
+  [`device-attest-01`](https://smallstep.com/docs/step-ca/provisioners/#acme)**.
+  The vTPM makes the private key of the device certificate. The private key does
+  not go out of the vTPM.
+- **The operator** (you) logs in with an **SSH certificate**. The private key of
+  this certificate stays in the TPM or the Secure Enclave of your laptop. The
+  `sshd` server trusts the *CA that signs the certificates*, not one specified
+  key. Thus the server accepts each enrolled, high-assurance device. The server
+  refuses all other devices.
 
-Two features, nothing else: **ACME Device Attestation** and **SSH device identity**.
+The repository shows two functions only: **ACME Device Attestation** and **SSH
+device identity**.
 
 ```
 Operator laptop (TPM)                          Cloud VM (vTPM)
@@ -30,9 +34,10 @@ ssh operator@vm ──cert──► sshd: TrustedUserCAKeys + AuthorizedPrincipa
 no cert ─────────────────► Permission denied (publickey)
 ```
 
-## Quickstart
+## Quick start
 
-Per VM: **provision → enroll the vTPM → gate SSH on the cert → prove it.**
+For each VM, do these steps: provision the VM, enroll the vTPM, configure the
+SSH gate, and do the tests.
 
 ```bash
 # 0. Prereqs (see below), then export your SSH public key and Smallstep team:
@@ -52,23 +57,33 @@ done
 scripts/teardown.sh all                    # leave nothing running
 ```
 
-`prove.sh` is the deliverable: it logs in as `operator` using the hardware SSH cert
-(and shows the server-side `Accepted publickey ... ID <you> ... CA` line), then
-tries the same login with **no agent and no key** and shows it refused.
+The script `prove.sh` gives the proof. It logs in as `operator` with the
+hardware SSH certificate. It shows the server log line
+`Accepted publickey ... ID <you> ... CA`. Then it tries the same login with
+**no agent and no key**. It shows that the server refuses this login.
 
-## Prerequisites
+## Before you start
 
-- **Terraform** ≥ 1.5 (AWS, GCP) · **Azure CLI** with Bicep (`az bicep install`) · `ssh`/`scp`
+You must have these items:
+
+- **Terraform** 1.5 or later (for AWS and GCP), the **Azure CLI** with Bicep
+  (`az bicep install`), and `ssh`/`scp`.
 - A **Smallstep** team (hosted or `step-ca`) with:
-  - an **Agents CA** (for `device-attest-01` enrollment) — you supply its fingerprint,
-  - an **SSH user CA** — `step ssh config --roots` gives you its public key,
-  - an **SSH_USER credential** configured `HARDWARE_ATTESTED`, assurance `high`,
-    with `smallstep:identity` in its principals (see [docs/ssh-device-identity.md](docs/ssh-device-identity.md)).
-- Your **laptop enrolled** into that team via the official Smallstep agent, so your
-  agent holds a hardware SSH cert (`ssh-add -L` shows it).
-- Per cloud you run: AWS (`aws` CLI v2, EC2 perms incl. `ec2:GetInstanceTpmEkPub`),
-  GCP (`gcloud`, `export TF_VAR_project_id=<project>`), Azure (`az`, a subscription
-  that allows Trusted Launch sizes).
+  - an **Agents CA** for `device-attest-01` enrollment. You supply the
+    fingerprint of this CA.
+  - an **SSH user CA**. The command `step ssh config --roots` writes its public
+    key.
+  - an **SSH_USER credential** with `HARDWARE_ATTESTED`, assurance `high`, and
+    `smallstep:identity` in its principals. Refer to
+    [docs/ssh-device-identity.md](docs/ssh-device-identity.md).
+- A **laptop that is enrolled** into that team with the official Smallstep
+  agent. Then your agent holds a hardware SSH certificate. The command
+  `ssh-add -L` shows this certificate.
+- The tools for each cloud that you use:
+  - AWS: the `aws` CLI v2, and EC2 permissions that include
+    `ec2:GetInstanceTpmEkPub`.
+  - GCP: `gcloud`, and `export TF_VAR_project_id=<project>`.
+  - Azure: `az`, and a subscription that permits Trusted Launch sizes.
 
 ## The three targets
 
@@ -90,30 +105,35 @@ scripts/
   prove.sh                          # in with the cert; refused without it
   teardown.sh                       # destroy (per cloud, or `all`)
 docs/
-  ssh-device-identity.md            # how the SSH gate works, server + operator sides
+  ssh-device-identity.md            # how the SSH gate operates, server + operator sides
   acme-da.md                        # how the VM vTPM enrolls (device-attest-01), per cloud
-  scope.md                          # what this repo is and is not
-  trust-model.md                    # what is trusted, and why you can't get in without the cert
+  scope.md                          # what this repository is and is not
+  trust-model.md                    # what is trusted, and why you cannot log in without the cert
 ```
 
 ## Security notes
 
-This is a **reference / demo**, not production IaC. Read before running:
+This repository is a **reference demonstration**. It is not production IaC.
+Read these notes before you use it:
 
-- **It bills your cloud account.** Real VMs (and, on AWS, an AMI copy + EBS
-  snapshot) are created. The dominant risk is a **failed teardown** — always run
-  `scripts/teardown.sh all` and verify the console.
-- **Port 22 is open to the internet by design** so you can prove "reachable, but
-  refused without the cert" from anywhere. The hardware SSH cert is the access
-  control; the admin/provisioning user is key-based (no passwords). Narrow
-  `ssh_ingress_cidr` / `sshIngressCidr` to your `/32` for network-layer scoping on
-  top, or front with a bastion for anything real.
-- **`operator` has passwordless sudo** for demo convenience — tighten
-  `sudoers.d/90-operator` for real use.
-- **Assurance is enforced by the CA:** credentials are `HARDWARE_ATTESTED` +
-  assurance `high`, so only TPM/Secure-Enclave-backed devices are ever issued a cert.
-- **Revocation** = remove the device from inventory or drop its principal from
-  `auth_principals`; SSH certs are short-lived (24h) and stop renewing.
+- **The VMs increase the costs of your cloud account.** The scripts make real
+  VMs. On AWS, the scripts also make an AMI copy and an EBS snapshot. A failed
+  teardown is the primary risk. Always run `scripts/teardown.sh all`. Then
+  examine the cloud console.
+- **Port 22 is open to the internet by design.** Thus you can show "the server
+  refuses a login without the certificate" from each location. The hardware SSH
+  certificate is the access control. The admin user uses a key, not a password.
+  To decrease the network exposure, set `ssh_ingress_cidr` / `sshIngressCidr`
+  to your `/32` address. For production use, put a bastion in front of the VMs.
+- **The `operator` user has sudo without a password.** This is for the
+  demonstration only. For production use, make `sudoers.d/90-operator` more
+  restrictive.
+- **The CA enforces the assurance level.** The credentials are
+  `HARDWARE_ATTESTED` with assurance `high`. Thus the CA issues certificates
+  only to devices with a TPM or a Secure Enclave.
+- **Revocation:** remove the device from the inventory, or remove its principal
+  from `auth_principals`. The SSH certificates are valid for 24 hours. They stop
+  when the CA does not renew them.
 
 ## License
 

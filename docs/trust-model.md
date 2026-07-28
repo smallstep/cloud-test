@@ -1,61 +1,71 @@
-# Trust model — why you can't get in without the cert
+# Trust model — why you cannot log in without the certificate
 
-Two hardware-rooted identities meet at the VM's `sshd`. Neither involves a static
-key or a password.
+Two hardware identities come together at the `sshd` of the VM. No identity
+uses a static key or a password.
 
 ## The two identities
 
-| | Rooted in | Enrolled via | Used for |
+| | Root | Enrollment | Function |
 | --- | --- | --- | --- |
-| **VM device identity** | the VM's cloud **vTPM** (EK) | ACME `device-attest-01` | proving the VM is a genuine, attested device (Devices CA leaf, TPM-resident key) |
-| **Operator device identity** | your **laptop TPM / Secure Enclave** | ACME `device-attest-01` | the **SSH_USER certificate** you log in with |
+| **VM device identity** | the cloud **vTPM** of the VM (EK) | ACME `device-attest-01` | shows that the VM is an approved, attested device (Devices CA leaf; the key stays in the TPM) |
+| **Operator device identity** | the **TPM / Secure Enclave** of your laptop | ACME `device-attest-01` | the **SSH_USER certificate** that you log in with |
 
-## What `sshd` actually trusts
+## What `sshd` trusts
 
-`sshd` is configured with `TrustedUserCAKeys` pointing at the Smallstep **SSH user
-CA** public key. That means:
+`sshd` has the configuration `TrustedUserCAKeys`. This configuration points to
+the public key of the Smallstep **SSH user CA**. The effects are:
 
-- It trusts the **issuing CA**, not any specific key. Any certificate that CA signs
-  — for any enrolled, high-assurance device — is accepted; a self-signed or
-  unknown-CA key is not.
-- The certificate must carry a **principal** listed in `auth_principals/operator`.
-  The principal is your Smallstep identity (email), bound into the cert by the
-  `SSH_USER` credential.
-- There is **no `authorized_keys`** for `operator` and **no password**. Remove the
-  cert path and there is no other way in.
+- `sshd` trusts the **CA**, not one specified key. `sshd` accepts each
+  certificate that this CA signs. The CA signs certificates only for enrolled,
+  high-assurance devices. `sshd` refuses a self-signed key and a key from an
+  unknown CA.
+- The certificate must contain a **principal** from the file
+  `auth_principals/operator`. The principal is your Smallstep identity (an
+  email address). The `SSH_USER` credential puts the principal into the
+  certificate.
+- The `operator` user has **no `authorized_keys`** and **no password**. If you
+  remove the certificate path, no other path exists.
 
-So a login succeeds only if **all** of these hold:
+A login is successful only when all these conditions are true:
 
-1. You present a certificate (your agent does, from the laptop TPM).
-2. It was signed by a CA in `TrustedUserCAKeys`.
-3. It is unexpired (SSH certs here are 24h).
-4. Its principal is mapped to `operator`.
+1. You give a certificate. Your agent does this with the key in the laptop
+   TPM.
+2. A CA in `TrustedUserCAKeys` signed the certificate.
+3. The certificate is not expired. The SSH certificates here are valid for 24
+   hours.
+4. The principal of the certificate points to `operator`.
 
-Miss any one → `Permission denied (publickey)`.
+If one condition is not true, the result is `Permission denied (publickey)`.
 
-## Assurance is enforced upstream, at issuance
+## The CA enforces the assurance level at issuance
 
-The certificate can only exist for a hardware-backed device in the first place: the
-Smallstep credential is `HARDWARE_ATTESTED` with assurance `high`, and issuance runs
-`device-attest-01`, which requires proof that:
+A certificate can exist only for a device with hardware protection. The
+Smallstep credential is `HARDWARE_ATTESTED` with assurance `high`. The
+issuance procedure does `device-attest-01`. This procedure needs proof of two
+facts:
 
-- the private key was generated **inside** a TPM/Secure Enclave (non-exportable), and
-- the attestation key lives in the **same** hardware device.
+- The TPM or the Secure Enclave made the private key **inside** the hardware.
+  The key cannot be exported.
+- The attestation key is in the **same** hardware device.
 
-A software key, a copied key, or a low-assurance device never gets a cert — so the
-`sshd` gate is really the *tail end* of a chain that starts at silicon.
+A software key, a copied key, or a low-assurance device does not get a
+certificate. The `sshd` gate is the last part of a chain that starts in the
+silicon.
 
-## Why the open port is fine
+## Why the open port is acceptable
 
-Port 22 is reachable from the internet on purpose, so "refused without the cert" is
-demonstrable from anywhere. The network is **not** the control; the certificate is.
-Narrowing ingress to a `/32` or fronting with a bastion is defense-in-depth layered
-*on top of* the cert gate, not a substitute for it. (The admin user is key-based and
-exists only for provisioning; harden or remove it for real use.)
+Port 22 is open to the internet by design. Thus you can show the refused
+login from each location. The network is **not** the control. The certificate
+is the control. A `/32` ingress rule or a bastion is an extra layer on top of
+the certificate gate. It is not a replacement for the gate. The admin user
+uses a key and exists only for the initial configuration. Make it more
+restrictive, or remove it, for production use.
 
 ## Revocation
 
-- **Operator:** remove the device from inventory (its cert stops renewing) or drop
-  its principal from `auth_principals/operator`. Short 24h lifetimes mean access
-  lapses quickly without an explicit revocation list.
-- **VM:** remove its EK from inventory; it can no longer re-attest or renew.
+- **Operator:** remove the device from the inventory. The certificate then
+  does not renew. As an alternative, remove the principal from
+  `auth_principals/operator`. The certificates are valid for 24 hours. Thus
+  access stops quickly without a revocation list.
+- **VM:** remove the EK of the VM from the inventory. The VM then cannot
+  attest again or renew.

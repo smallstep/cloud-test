@@ -1,9 +1,10 @@
-# SSH device identity — how the gate works
+# SSH device identity — how the gate operates
 
-Goal: `operator@<vm>` is reachable **only** with a hardware-attested Smallstep SSH
-certificate. No static keys, no passwords. This is what
-[`scripts/setup-ssh-identity.sh`](../scripts/setup-ssh-identity.sh) automates and
-[`scripts/prove.sh`](../scripts/prove.sh) verifies.
+Goal: you can log in to `operator@<vm>` **only** with a hardware-attested
+Smallstep SSH certificate. There are no static keys and no passwords. The
+script [`scripts/setup-ssh-identity.sh`](../scripts/setup-ssh-identity.sh) does
+the configuration. The script [`scripts/prove.sh`](../scripts/prove.sh) does
+the tests.
 
 ```
 Operator laptop (TPM)                        Cloud VM
@@ -17,38 +18,43 @@ ssh operator@vm ──cert──► sshd: TrustedUserCAKeys + AuthorizedPrincipa
                                  → principal "you@example.com" maps to `operator`
 ```
 
-The SSH cert's private key is generated in and never leaves the device's TPM. The
-server trusts the **issuing CA**, not a pinned key — so any enrolled, high-assurance
-device is admitted and a non-enrolled machine is refused.
+The TPM of the device makes the private key of the SSH certificate. The
+private key does not go out of the TPM. The server trusts the **CA that issues
+the certificates**, not one specified key. Thus the server accepts each
+enrolled, high-assurance device. The server refuses a machine that is not
+enrolled.
 
-## Part A — server side (per VM, automated by `setup-ssh-identity.sh`)
+## Part A — server side (for each VM; `setup-ssh-identity.sh` does this)
 
 ### A1. Trust the Smallstep SSH user CA
 
-Get the SSH user CA public key in **OpenSSH** format (not X.509) on any enrolled
-machine:
+Get the public key of the SSH user CA in **OpenSSH** format (not X.509). Do
+this on an enrolled machine:
 
 ```bash
 step ssh config --roots > smallstep-ssh-ca.pub
 ```
 
-> ⚠️ A team can have more than one SSH **user** CA (e.g. a *workload* CA that signs
-> servers' SSH certs and an *account* CA that signs operator/laptop certs). The CA
-> that signs the **operator's** cert is the one that matters. Trust **every** CA
-> that signs operator certs — `TrustedUserCAKeys` takes one key per line. Find a
-> cert's signer with `ssh-keygen -L -f <cert>` → "Signing CA".
+> ⚠️ A team can have more than one SSH **user** CA. For example, a *workload*
+> CA signs the SSH certificates of servers, and an *account* CA signs the
+> certificates of operators and laptops. The CA that signs the certificate of
+> the **operator** is the important CA. Trust **each** CA that signs operator
+> certificates. `TrustedUserCAKeys` accepts one key on each line. To find the
+> CA that signed a certificate, use `ssh-keygen -L -f <cert>` and read
+> "Signing CA".
 
-`sshd` is then told to trust it (additive — normal key auth is unaffected, so you
-cannot lock yourself out):
+Then configure `sshd` to trust the CA. This configuration is an addition. The
+usual key authentication continues to operate. Thus you cannot lock yourself
+out:
 
 ```
 # /etc/ssh/sshd_config.d/10-smallstep.conf
 TrustedUserCAKeys /etc/ssh/smallstep_ca.pub
 AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
-MaxAuthTries 20    # an agent holding many identities trips the default cap of 6
+MaxAuthTries 20    # an agent that holds many identities goes past the default limit of 6
 ```
 
-### A2. Cert-only `operator` user
+### A2. The `operator` user, certificate only
 
 ```bash
 # reuse a historical `operator` group (GID 37) if present, else useradd fails
@@ -58,23 +64,25 @@ sudo install -d -m 0755 /etc/ssh/auth_principals
 echo 'you@example.com' | sudo tee /etc/ssh/auth_principals/operator
 ```
 
-`operator` has **no password and no `authorized_keys`** — it is reachable only via a
-valid SSH cert whose principal is listed in `auth_principals/operator`. The
-provisioning admin user (`ubuntu` / `azureuser`) stays key-based and is *not*
-cert-accessible (no `auth_principals` file), so you can set this up without risk of
-lockout.
+The `operator` user has **no password and no `authorized_keys`**. You can log
+in as `operator` only with an applicable SSH certificate. The principal of the
+certificate must be in `auth_principals/operator`. The admin user (`ubuntu` /
+`azureuser`) uses a key. The admin user cannot use a certificate, because it
+has no `auth_principals` file. Thus this procedure cannot lock you out.
 
-## Part B — operator (client) setup
+## Part B — operator (client) configuration
 
-1. **Configure the SSH_USER credential** on your Smallstep team (once): `kind: account`,
-   `SSH_USER`, `HARDWARE_ATTESTED`, assurance `high`, principals include
-   `smallstep:identity`. This is what makes the issued cert carry your identity as a
-   principal and be issued only to a TPM-backed device.
+1. **Configure the SSH_USER credential** on your Smallstep team (one time):
+   `kind: account`, `SSH_USER`, `HARDWARE_ATTESTED`, assurance `high`. Include
+   `smallstep:identity` in the principals. Then the certificate contains your
+   identity as a principal. The CA issues the certificate only to a device
+   with a TPM.
 2. **Enroll your laptop** into the team with the official Smallstep agent (TPM
    `device-attest-01`). Get the agent from
    <https://smallstep.com/docs/platform/smallstep-agent/>.
-3. **Point SSH at the agent socket** — the agent exposes the hardware SSH cert
-   through its SSH agent socket, which `ssh` consumes natively (no PKCS#11 needed):
+3. **Point SSH to the agent socket.** The agent gives the hardware SSH
+   certificate through its SSH agent socket. `ssh` can use this socket
+   directly. PKCS#11 is not necessary.
 
    | OS | `SSH_AUTH_SOCK` |
    | --- | --- |
@@ -82,50 +90,55 @@ lockout.
    | **macOS** | `$HOME/Library/Application Support/Smallstep/step-ssh-agent.sock` |
    | **Windows** | `\\.\pipe\step-agent-ssh` (set as a *User* env var; new terminal) |
 
-   Verify: `ssh-add -L` shows a cert whose principal equals your Smallstep identity.
+   Make sure that the configuration is correct: the command `ssh-add -L` shows
+   a certificate. The principal of this certificate is your Smallstep
+   identity.
 
-   > **Windows:** the agent is a named pipe that **Git Bash's ssh cannot consume** —
-   > use the **native Windows OpenSSH** (`C:\Windows\System32\OpenSSH\ssh.exe`, i.e.
-   > `ssh` from PowerShell). `prove.sh` handles this automatically (it shells out to
-   > the native `ssh.exe` for the positive test); if you drive SSH yourself on
-   > Windows, run it from PowerShell, not Git Bash. Admin/provisioning connections
-   > use your key (not the agent), so those work from either shell.
+   > **Windows:** the agent is a named pipe. The `ssh` program of Git Bash
+   > **cannot use this pipe**. Use the **native Windows OpenSSH**
+   > (`C:\Windows\System32\OpenSSH\ssh.exe`; this is `ssh` in PowerShell). The
+   > script `prove.sh` does this automatically. It uses the native `ssh.exe`
+   > for the positive test. If you use SSH manually on Windows, use
+   > PowerShell, not Git Bash. Admin connections use your key, not the agent.
+   > Thus admin connections operate from both shells.
 
-## Part C — prove it
+## Part C — the tests
 
 ```bash
 ssh operator@<vm>            # ✅ logs in with no key/password (agent presents the cert)
 ```
 
-Confirm server-side it was a certificate:
+Make sure on the server that the login used a certificate:
 
 ```bash
 sudo journalctl -u ssh -n 20 | grep -i 'Accepted publickey for operator.*ID you@example.com.*CA'
 ```
 
-Negative — from a machine (or shell) with **no agent and no key**, the same login is
-refused:
+Negative test — use a machine or a shell that has **no agent and no key**. The
+server refuses the same login:
 
 ```bash
 ssh -o IdentityAgent=none -o IdentitiesOnly=yes -o PasswordAuthentication=no \
     operator@<vm>            # ❌ Permission denied (publickey)
 ```
 
-`scripts/prove.sh <cloud>` runs both and prints a PASS/FAIL summary.
+The script `scripts/prove.sh <cloud>` does the two tests and shows a PASS/FAIL
+summary.
 
-## Troubleshooting (each of these bit us once)
+## Troubleshooting
 
-Read the **server** log for the real reason — `sudo journalctl -u ssh -n 30`:
+Each of these problems occurred one time in our tests. Read the **server** log
+to find the true cause — `sudo journalctl -u ssh -n 30`:
 
-| Client sees | Server log says | Cause → fix |
+| Client sees | Server log says | Cause → repair |
 | --- | --- | --- |
-| `Too many authentication failures` | many `…failed` | Agent holds many identities, server caps at `MaxAuthTries 6`. → set `MaxAuthTries 20` (A1). |
-| `Permission denied (publickey)` | `Certificate invalid: <CA> not in …` | Operator cert signed by a CA the VM doesn't trust. → add that CA to `smallstep_ca.pub` (A1 dual-CA note). |
-| `Permission denied (publickey)` | `…not in list of valid principals` | Cert principal ≠ `auth_principals/<user>`. → fix the mapping or the cert's principals. |
+| `Too many authentication failures` | many `…failed` | The agent holds many identities. The server limit is `MaxAuthTries 6`. → Set `MaxAuthTries 20` (A1). |
+| `Permission denied (publickey)` | `Certificate invalid: <CA> not in …` | A CA that the VM does not trust signed the operator certificate. → Add that CA to `smallstep_ca.pub` (A1, the note about more than one CA). |
+| `Permission denied (publickey)` | `…not in list of valid principals` | The certificate principal is not in `auth_principals/<user>`. → Correct the map or the principals of the certificate. |
 
-**Windows: `ssh` using the wrong agent.** If `ssh-add -L` shows old/personal certs,
-`ssh` is talking to Windows OpenSSH's own agent, not the Smallstep pipe. Fix it **in
-the shell you run `ssh` from**:
+**Windows: `ssh` speaks to the incorrect agent.** If `ssh-add -L` shows old or
+personal certificates, then `ssh` speaks to the agent of Windows OpenSSH, not
+to the Smallstep pipe. Correct this **in the shell where you use `ssh`**:
 
 ```powershell
 $env:SSH_AUTH_SOCK = '\\.\pipe\step-agent-ssh'
@@ -135,5 +148,9 @@ ssh-add -L    # should now show a cert valid today
 
 ## Revocation
 
-Remove the device from inventory (it stops renewing), or drop its principal from
-`auth_principals/operator`. SSH certs are short-lived (24h), so access lapses fast.
+To remove access, do one of these steps:
+
+- Remove the device from the inventory. The certificate then does not renew.
+- Remove the principal from `auth_principals/operator`.
+
+The SSH certificates are valid for 24 hours. Thus access stops quickly.
